@@ -2,7 +2,11 @@ import streamlit as st
 
 import requests
 from stix2 import MemoryStore, Filter
+from stix2.v21 import AttackPattern
+import numpy as np
+import matplotlib.pyplot as plt
 import pandas as pd
+
 
 def get_data_from_branch(domain):
     """get the ATT&CK STIX data from MITRE/CTI. Domain should be 'enterprise-attack', 'mobile-attack' or
@@ -19,7 +23,8 @@ def get_techniques_or_subtechniques(thesrc, include="both"):
     if include == "techniques":
         query_results = thesrc.query([
             Filter('type', '=', 'attack-pattern'),
-            Filter('x_mitre_is_subtechnique', '=', False)
+            Filter('x_mitre_is_subtechnique', '=', False),
+            Filter('revoked', '=', False)
         ])
     elif include == "subtechniques":
         query_results = thesrc.query([
@@ -37,27 +42,54 @@ def get_techniques_or_subtechniques(thesrc, include="both"):
 
 
 def get_mitigations(thesrc):
-    return thesrc.query(['type', '=', 'course-of-action'])
+    return thesrc.query([
+        Filter('type', '=', 'course-of-action'),
+        Filter('x_mitre_deprecated', '=', False)
+    ])
 
-def remove_revoked_deprecated(stix_objects):
-    """Remove any revoked or deprecated objects from queries made to the data source"""
-    # Note we use .get() because the property may not be present in the JSON data. The default is False
-    # if the property is not set.
-    return list(
-        filter(
-            lambda x: x.get("x_mitre_deprecated", False) is False or x.get("revoked", False) is False,
-            stix_objects
-        )
-    )
 
+def get_tactics(thesrc):
+    return thesrc.query([
+        Filter('type', '=', 'x-mitre-tactic')
+    ])
 
 src = get_data_from_branch("enterprise-attack")
 
-subtechniques = get_techniques_or_subtechniques(src, "both")
-subtechniques = remove_revoked_deprecated(subtechniques)
+techniques = get_techniques_or_subtechniques(src, include="techniques")
+
+st.write("### Данные атак Mitre ATT&CK")
+
+techniques_data = [dict(t) for t in techniques]
+
+techniques_df = pd.DataFrame(techniques_data)
+st.dataframe(techniques_df.loc[:, ~techniques_df.columns.isin(['kill_chain_phases', 'external_references'])])
 
 mitigations = get_mitigations(src)
 
-#st.write(subtechniques)
-df = pd.DataFrame(mitigations)
-st.dataframe(df)
+st.write("### Данные митигаций Mitre ATT&CK")
+
+mitigations_data = [dict(m) for m in mitigations]
+
+mitigations_df = pd.DataFrame(mitigations)
+st.dataframe(mitigations_df.loc[:, ~mitigations_df.columns.isin(['external_references'])])
+
+tactics = get_tactics(src)
+
+st.write("### Данные тактик Mitre ATT&CK")
+
+tactics_data = [ta for ta in tactics]
+
+tactics_df = pd.DataFrame(tactics)
+st.dataframe(tactics_df)
+
+st.write("### Матрица")
+
+matrix = np.random.rand(3, 3)
+
+fig, ax = plt.subplots()
+
+ax.grid()
+
+plt.matshow(matrix, fig, cmap='cividis')
+
+st.pyplot(fig)
