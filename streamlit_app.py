@@ -1,95 +1,151 @@
 import streamlit as st
 
-import requests
-from stix2 import MemoryStore, Filter
-from stix2.v21 import AttackPattern
+import stixlib as sx
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
 
-def get_data_from_branch(domain):
-    """get the ATT&CK STIX data from MITRE/CTI. Domain should be 'enterprise-attack', 'mobile-attack' or
-    'ics-attack'. Branch should typically be master."""
-    stix_json = requests.get(
-        f"https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/{domain}/{domain}.json").json()
-    return MemoryStore(stix_data=stix_json["objects"])
+@st.cache_data(persist=True)
+def cached_get_src():
+    thesrc = sx.get_data_from_branch("enterprise-attack")
+    # st.success("Fetched latest MITRE ATT&CK data")
+    return thesrc
 
 
-def get_techniques_or_subtechniques(thesrc, include="both"):
-    """Filter Techniques or Sub-Techniques from ATT&CK Enterprise Domain.
-    include argument has three options: "techniques", "subtechniques", or "both"
-    depending on the intended behavior."""
-    if include == "techniques":
-        query_results = thesrc.query([
-            Filter('type', '=', 'attack-pattern'),
-            Filter('x_mitre_is_subtechnique', '=', False),
-            Filter('revoked', '=', False)
-        ])
-    elif include == "subtechniques":
-        query_results = thesrc.query([
-            Filter('type', '=', 'attack-pattern'),
-            Filter('x_mitre_is_subtechnique', '=', True)
-        ])
-    elif include == "both":
-        query_results = thesrc.query([
-            Filter('type', '=', 'attack-pattern')
-        ])
-    else:
-        raise RuntimeError("Unknown option %s!" % include)
+st.set_page_config(page_title="Game Theory Security", page_icon='🧮', layout="wide")
 
-    return query_results
+src = cached_get_src()
 
+if "intro" not in st.session_state:
+    st.session_state["intro"] = False
 
-def get_mitigations(thesrc):
-    return thesrc.query([
-        Filter('type', '=', 'course-of-action'),
-        Filter('x_mitre_deprecated', '=', False)
-    ])
+col1, col2 = st.columns([2, 1])
 
+col1.write('''# Анализ защищенности системы на основе теории игр 
+Теория игр применяется во многих сферах жизни включая экономику, билогию и социальных науках. Основная идея заключается 
+в построении математической игры между N агентами, борящимся за ограниченное число ресурсов. В более сложных играх 
+цели агентов могут быть иными, помимо получения бо́льшого числа ресурсов.
 
-def get_tactics(thesrc):
-    return thesrc.query([
-        Filter('type', '=', 'x-mitre-tactic')
-    ])
+Данное приложение использует теорию игр для анализа защищенности компьютерной системы, симулируя игру между 
+потенциальным "злоумышленником" и "администратором" (т.е. вами). Приложение позволяет вывести оптимальную стратегию 
+защиты системы (в рамках представленных значений).
 
-src = get_data_from_branch("enterprise-attack")
+Определения атак, мер защит и тактик используют спецификацию [**MITRE ATT&CK**](https://attack.mitre.org/), 
+потенциально приблежая симуляцию к реальному миру.
 
-techniques = get_techniques_or_subtechniques(src, include="techniques")
+Для начала нажмите кнопку начать ниже.
+''')
 
-st.write("### Данные атак Mitre ATT&CK")
+col2.image('prisonerdillema.png', caption="Знаменитая диллема заключенного, представленная матричной игрой")
 
-techniques_data = [dict(t) for t in techniques]
+if st.button("Начать!", key='start_'):
+    st.session_state.intro = True
 
-techniques_df = pd.DataFrame(techniques_data)
-st.dataframe(techniques_df.loc[:, ~techniques_df.columns.isin(['kill_chain_phases', 'external_references'])])
+if st.session_state['intro']:
+    tactics = sx.get_tactics(src)
+    possible_win_conditions = ['UnlimitedResourcesMaxDamage']
 
-mitigations = get_mitigations(src)
+    st.write("---")
+    st.write("## Определите начальные условия игры")
+    col3, col4 = st.columns(2)
+    col3.write('''
+    Прежде чем начать, вам необходимо определить модель злоумышленника, его цель и потенциальное поведение, определяемое 
+    "тактиками" в спецификации MITRE ATT&CK.
+    
+    Выбранные вами тактики будут влиять на набор атак, представленных в матрице игры, но не на набор мер защиты 
+    (так как симулируемая игра является игрой с ограниченной информацией).
+    
+    В форме справа вы можете найти настройки злоумышленника.
+    
+    По окончанию нажмите кнопку Продолжить, чтобы перейти на следующий этап установки условий.
+    
+    ''')
 
-st.write("### Данные митигаций Mitre ATT&CK")
+    with col4:
+        with st.form("attacker-settings"):
+            win_condition = st.selectbox(
+                label="Критерий злоумышленника",
+                options=possible_win_conditions,
+                help="На данный момент реализован единственный критерий: Нанесение максимального ущерба",
+                key='win_condition'
+            )
+            available_tactis = st.multiselect(
+                label="Тактики доступные злоумышленнику",
+                options=tactics,
+                format_func=lambda x: x.get("name"),
+                help="Список тактик и их значения можно найти [здесь](https://attack.mitre.org/tactics/enterprise/)",
+                key='available_tactics'
+            )
+            submit = st.form_submit_button('Сохранить')
 
-mitigations_data = [dict(m) for m in mitigations]
+    if st.session_state['available_tactics']:
+        with st.expander(label="Просмотреть выбранные тактики"):
+            st.write("#### Выбранные вами тактики представленные как DataFrame:")
+            form_tactics_df = pd.DataFrame(st.session_state.available_tactics)
+            st.dataframe(form_tactics_df)
 
-mitigations_df = pd.DataFrame(mitigations)
-st.dataframe(mitigations_df.loc[:, ~mitigations_df.columns.isin(['external_references'])])
+    mitigations = sx.get_mitigations(src)
 
-tactics = get_tactics(src)
+    st.write('---')
+    st.write("## Определение установленых мер защиты и цены")
+    col5, col6 = st.columns([0.4, 0.6])
+    with col5:
+        '''
+        Матричные игры в теории игр оперируют "платежными матрицами". Для осуществления симуляции нам необходимо 
+        определить ресурсы используемые в системе, какие меры защиты реализует каждый ресурс, и "цену" ресурса.
 
-st.write("### Данные тактик Mitre ATT&CK")
+        Игра рассматриваемая в приложении является *биматричной* означая, что злоумышленник и администратор 
+        ориентируются на собственные платежные матрицы при выборе стратегий, не имея информации о матрице другого.
 
-tactics_data = [ta for ta in tactics]
+        Для злоумышленника это матрица потенциального ущерба при атаке на ресурс, для администратора это средства 
+        затраченные на реализацию защитных мер.
 
-tactics_df = pd.DataFrame(tactics)
-st.dataframe(tactics_df)
+        Ресурсами могут быть:
+        - Написанное вами приложение
+        - Сторонее ПО (антивирусы, брендмауеры и проч.)
+        - Машины (сервера, рабочие места, сетевые контроллеры и др.)
 
-st.write("### Матрица")
+        Определение цены является важным фактором для точности симуляции. Вы можете воспользоваться следующими советами:
+        - Для определения цены написанного приложения, вы можете выставить цену разработки приложения 
+        (например умножить затраченные часы на почасовой тариф разработчика)
+        - Сторонне ПО определяется его стоимостью при покупке
+        - Физические машины могут быть представлены ценой о их закупке и сопровождению.
+        '''
 
-matrix = np.random.rand(3, 3)
+    with col6:
+        with st.form("admin-app-specs"):
+            app_name = st.text_input(
+                label='Название приложения',
+            )
+            app_price = st.number_input(
+                label='Цена приложения'
+            )
+            app_mitigations = st.multiselect(
+                label="Меры защиты реализуемые приложением",
+                options=mitigations,
+                format_func=lambda x: x.get("name"),
+                help="Список мер защиты есть [здесь](https://attack.mitre.org/mitigations/enterprise/)",
+            )
 
-fig, ax = plt.subplots()
+    with st.expander(label="Просмотреть выбранные меры защиты"):
+        st.warning("Streamlit не может показать ряд столбцов ввиду использования PyArrow. "
+                   "Это исключительно проблема отображения в интерфейсе, стоблцы все еще присутсвуют, но их не видно.")
+        st.write("#### Выбранные вами меры защиты: (ДЕБАГ, СЕЙЧАС ТУТ ВСЕ ВОЗМОЖНЫЕ МЕРЫ ЗАЩИТЫ)")
+        form_mitigations_df = pd.DataFrame(sx.remove_revoked_deprecated(mitigations))
+        st.dataframe(sx.debug_dataframe_attack_pattern(form_mitigations_df))
 
-ax.grid()
+    # techniques_df = pd.DataFrame(techniques_data)
+    # st.dataframe(techniques_df.loc[:, ~techniques_df.columns.isin(['kill_chain_phases', 'external_references'])])
 
-plt.matshow(matrix, fig, cmap='cividis')
+    st.write("### Матрица")
 
-st.pyplot(fig)
+    matrix = np.random.rand(3, 3)
+
+    fig, ax = plt.subplots()
+
+    ax.grid()
+
+    plt.matshow(matrix, fig, cmap='cividis')
+
+    st.pyplot(fig)
