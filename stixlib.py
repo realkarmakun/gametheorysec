@@ -36,6 +36,34 @@ def get_techniques_or_subtechniques(thesrc, include="both"):
     return query_results
 
 
+def get_mitigation_by_id(thesrc, mitigation_id):
+    return thesrc.query([
+        Filter('type', '=', 'course-of-action'),
+        Filter('id', '=', mitigation_id)
+    ])
+
+
+def get_mitigations_by_ids(thesrc, migitation_ids):
+    return thesrc.query([
+        Filter('type', '=', 'course-of-action'),
+        Filter('id', 'in', migitation_ids)
+    ])
+
+
+def get_techniques_by_ids(thesrc, techniques_ids):
+    return thesrc.query([
+        Filter('type', '=', 'attack-pattern'),
+        Filter('id', 'in', techniques_ids)
+    ])
+
+
+def get_tactics_by_ids(thesrc, tactics_ids):
+    return thesrc.query([
+        Filter('type', '=', 'x-mitre-tactic'),
+        Filter('id', 'in', tactics_ids)
+    ])
+
+
 def get_techniques_by_tactics(thesrc, tactics):
     # double checking the kill chain is MITRE ATT&CK
     # note: kill_chain_name is different for other domains:
@@ -44,10 +72,9 @@ def get_techniques_by_tactics(thesrc, tactics):
     #    - ics: "mitre-ics-attack"
     return thesrc.query([
         Filter('type', '=', 'attack-pattern'),
-        Filter('kill_chain_phases.phase_name', 'in', tactics),
-        Filter('kill_chain_phases.kill_chain_name', '=', 'mitre-attack'),
         Filter('x_mitre_is_subtechnique', '=', False),
-        Filter('revoked', '=', False)
+        Filter('kill_chain_phases.phase_name', 'in', tactics),
+        Filter('kill_chain_phases.kill_chain_name', '=', 'mitre-attack')
     ])
 
 

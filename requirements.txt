@@ -30,6 +30,8 @@ cvxopt==1.3.2
     # via intvalpy
 cycler==0.12.1
     # via matplotlib
+enum-properties==1.7.0
+    # via -r .\requirements.in
 fonttools==4.47.0
     # via matplotlib
 gitdb==4.0.11
