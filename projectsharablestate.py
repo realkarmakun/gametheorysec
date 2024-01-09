@@ -4,6 +4,8 @@ from enum import Enum
 import numpy as np
 from typing import Callable
 
+from intvalpy import Interval
+
 
 class DefenderCriteria(Enum):
     WALD_MAXIMIN = ('Критерий крайнего пессимизма Вальда', 'wald')
@@ -25,16 +27,26 @@ class AttackerCriteria(Enum):
         return str(self.value[0])
 
 
+class GameAlgorithm(Enum):
+    PlainRandomMonteCarlo = ("Наивный случайный Монте-Карло", "plainrandommontecarlo")
+
+    def __str__(self):
+        return str(self.value[0])
+
+
 @dataclass
 class AppEntry:
     app_name: str
     app_price: str
-    app_loss: str
+    app_loss: Interval
     app_mitigations: List[str] = field(default_factory=list)
 
     def as_dict(self):
         return {'app_name': self.app_name, 'app_price': self.app_price, 'app_loss': self.app_loss,
                 'app_mitigations': self.app_mitigations}
+
+    def is_mitigation_present(self, mitigation_id: str) -> bool:
+        return mitigation_id in self.app_mitigations
 
 
 @dataclass

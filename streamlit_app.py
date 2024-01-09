@@ -1,11 +1,17 @@
+import itertools
+import operator
+import random
+
 import streamlit as st
+from intvalpy import Interval
 
 import stixlib as sx
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from projectsharablestate import ProjectSettings, AppEntry, DefenderCriteria
+from maths import CombinationGenerator
+from projectsharablestate import ProjectSettings, AppEntry, DefenderCriteria, AttackerCriteria
 
 
 @st.cache_data(persist=True)
@@ -15,8 +21,18 @@ def cached_get_src():
     return thesrc
 
 
+# @st.cache_data(presist=True)
+def cached_get_technique_to_mitig_relations(thesrc):
+    technique_to_mitig_relations = sx.technique_mitigated_by_mitigations(thesrc)
+    return technique_to_mitig_relations
+
+
 def save_sim_settings():
     st.session_state["defender_criteria"] = st.session_state.form_admin_criteria
+    st.session_state["attacker_criteria"] = st.session_state.form_attacker_criteria
+    st.session_state["sim_amount"] = st.session_state.form_sim_amount
+    st.session_state["ucb_usage"] = st.session_state.form_ucb_usage
+    st.session_state["ready_to_sim"] = True
 
 
 def save_attacker_settings():
@@ -31,7 +47,7 @@ def add_app_entry():
     new_entry = AppEntry
     new_entry.app_name = st.session_state.form_app_name
     new_entry.app_price = st.session_state.form_app_price
-    new_entry.app_loss = st.session_state.form_app_loss
+    new_entry.app_loss = Interval(st.session_state.form_app_loss[0], st.session_state.form_app_loss[1])
     new_entry.app_mitigations = [m.get("id") for m in st.session_state.form_app_mitig]
     st.session_state["project_settings"].defender_apps.append(new_entry)
 
@@ -46,6 +62,7 @@ src = cached_get_src()
 
 if "intro" not in st.session_state:
     st.session_state["intro"] = False
+    st.session_state["ready_to_sim"] = False
 
 if "newproject" not in st.session_state:
     st.session_state["newproject"] = True
@@ -199,6 +216,12 @@ if st.session_state['intro']:
 
         with col8:
             with st.form("sim-settings"):
+                sim_amount = st.number_input(
+                    label="Количество симуляций",
+                    help="Определяет число симуляций для алгоритма Монте-Карло",
+                    step=1,
+                    key="form_sim_amount"
+                )
                 admin_criteria = st.selectbox(
                     label="Критерий администратора",
                     options=[c for c in DefenderCriteria],
@@ -207,49 +230,94 @@ if st.session_state['intro']:
                     placeholder="Выберите критерий",
                     format_func=lambda c: c.value[0],
                 )
+                attacker_criteria = st.selectbox(
+                    label="Критерий злоумышленника",
+                    options=[c for c in AttackerCriteria],
+                    index=None,
+                    key="form_attacker_criteria",
+                    placeholder="Выберите критерий",
+                    format_func=lambda c: c.value[0],
+                )
+
+                ucb_usage = st.checkbox(
+                    label="Использование UCB",
+                    key="form_ucb_usage",
+                    help="Вместо случайного выбора стратегий, в симуляциях Монте-Карло будет использоваться "
+                         "Upper-Confidence Bound, который предпологает более \"умный\" выбор стратегий"
+                )
                 submit = st.form_submit_button("Сохранить", on_click=save_sim_settings)
 
-        st.write("# Симуляция")
+        if st.session_state["ready_to_sim"]:
+            st.write("# Симуляция")
 
-        # 1. Построение матрицы защитника
-        # 1.1. Отображение выбранных тактик в атаки
-        # 1.1.1. Получаем техники из настроек проекта
-        tactics = sx.get_tactics_by_ids(thesrc=src, tactics_ids=project_settings().attacker_tactics)
+            # 1. Составим список стратегий злоумышленника для каждой тактики.
+            # Это все возможные уникальные комбинации техник для каждой тактики (по сути сочетание)
+            getting_ready_progress_text = f"Подготовка данных техник и мер защит"
+            calc_bar = st.progress(0, text=getting_ready_progress_text)
 
-        # 1.1.2. Получаем список атак из списка тактик
-        techniques = sx.get_techniques_by_tactics(thesrc=src, tactics=[t.get("x_mitre_shortname") for t in tactics])
+            tactics = sx.get_tactics_by_ids(thesrc=src,
+                                            tactics_ids=project_settings().attacker_tactics)
 
-        # 1.1.3. Удаляем старые и неподдерживаемые техники
-        techniques = sx.remove_revoked_deprecated(techniques)
+            attacker_strategies = list()
+            for tactic in tactics:
+                attacker_strategies += sx.get_techniques_by_tactics(thesrc=src,
+                                                                    tactics=[tactic.get("x_mitre_shortname")])
+            # Sort lexicographically
+            attacker_strategies.sort(key=operator.attrgetter("id"), reverse=True)
 
-        # 1.1.4. Получаем меры защиты
+            calc_bar.progress(10, getting_ready_progress_text)
 
-        mitigations = sx.remove_revoked_deprecated(sx.get_mitigations(src))
+            defender_strategies = list()
+            for app in project_settings().defender_apps:
+                defender_strategies += sx.get_mitigations_by_ids(thesrc=src,
+                                                                 migitation_ids=app.app_mitigations)
+            # Sort lexicographically
+            defender_strategies.sort(key=operator.attrgetter("id"), reverse=True)
 
-        # 1.2. Создание матрицы
-        # Перевод наборов тактик и мер в листы для надежной индексации
-        techniques_listed = [t for t in techniques]
-        mitigations_listed = [m for m in mitigations]
+            st.write(defender_strategies)
 
-        defender_matrix = np.empty((len(techniques_listed), len(mitigations_listed)), np.int32)
+            calc_bar.progress(20, getting_ready_progress_text)
 
+            # mitigations_available = sx.get_mitigations_by_ids(thesrc=src, migitation_ids=[app.app_mitigations for app in project_settings().defender_apps])
 
-        df = pd.DataFrame(techniques)
-        st.dataframe(sx.debug_dataframe_attack_pattern(df))
+            # Комбинаторная система чисел,
+            # позволяет получать нужную комбинацию от её лексографического положения в наборе всех комбинаций без подсчета каждой комбинации
+            combination_resolver_attacks = CombinationGenerator(attacker_strategies)
+            combination_resolver_mitigations = CombinationGenerator(defender_strategies)
 
+            M_for_defender = 2 ** len(defender_strategies) - 1
+            M_for_attacker = 2 ** len(attacker_strategies) - 1
+            col10, col11 = st.columns(2)
 
+            with col10:
 
-        # techniques_df = pd.DataFrame(techniques_data)
-        # st.dataframe(techniques_df.loc[:, ~techniques_df.columns.isin(['kill_chain_phases', 'external_references'])])
+                f'''
+                ### Количество стратегий:
+                
+                Формула:
+                
+                $$M = 2^S - 1$$, S - число стратегий 
+                
+                Для атакующего: $$M_A = 2^{{ {len(attacker_strategies)} }} - 1 = {M_for_attacker}$$
+                Для защищающего: $$M_A = 2^{{{len(defender_strategies)}}} - 1 = {M_for_defender}$$
+                '''
 
-    st.write("### Матрица")
+            t_to_m_relations = cached_get_technique_to_mitig_relations(src)
 
-    matrix = np.random.rand(3, 3)
+            monte_carlo_vals = []
 
-    fig, ax = plt.subplots()
+            # st.write(attacker_strategies)
 
-    ax.grid()
+            # 1.1.2. Получаем список атак из списка тактик
+            techniques = sx.get_techniques_by_tactics(thesrc=src, tactics=[t.get("x_mitre_shortname") for t in tactics])
 
-    plt.matshow(matrix, fig, cmap='cividis')
+            # 1.1.3. Удаляем старые и неподдерживаемые техники
+            techniques = sx.remove_revoked_deprecated(techniques)
+            # 1.1.4. Получаем меры защиты
 
-    st.pyplot(fig)
+            # mitigations = sx.get_mitigations_by_ids(thesrc=src, migitation_ids=all_mitigations)
+
+            # mitigations = sx.remove_revoked_deprecated(sx.get_mitigations(src))
+
+            # techniques_df = pd.DataFrame(techniques_data)
+            # st.dataframe(techniques_df.loc[:, ~techniques_df.columns.isin(['kill_chain_phases', 'external_references'])])
