@@ -1,19 +1,15 @@
-import itertools
 import operator
 import random
 
+import matplotlib.pyplot as plt
 import matspy
+import numpy as np
+import pandas as pd
+import scipy as sp
 import streamlit as st
 from intvalpy import Interval
 
 import stixlib as sx
-import numpy as np
-import scipy as sp
-import matplotlib.pyplot as plt
-import plotly.express as px
-import pandas as pd
-import matspy
-
 from maths import CombinationGenerator
 from projectsharablestate import ProjectSettings, AppEntry, DefenderCriteria, AttackerCriteria, GameAlgorithm
 
@@ -51,7 +47,7 @@ def save_sim_settings():
     st.session_state["defender_criteria"] = st.session_state.form_admin_criteria
     st.session_state["attacker_criteria"] = st.session_state.form_attacker_criteria
     st.session_state["sim_amount"] = st.session_state.form_sim_amount
-    st.session_state["ucb_usage"] = st.session_state.form_ucb_usage
+    st.session_state["algorithm"] = st.session_state.form_algorithm
     st.session_state["ready_to_sim"] = True
 
 
@@ -115,30 +111,29 @@ if st.button("Новый проект", key='start_') and not st.session_state['
     st.session_state['intro'] = True
     st.session_state['newproject'] = True
 
-if st.button("Загрузить проект", key='loadproject_') and not st.session_state['intro']:
+uploaded_file = st.file_uploader("Выберите файл проекта", accept_multiple_files=False)
+if uploaded_file is not None:
     st.session_state['intro'] = True
     st.session_state['newproject'] = False
-    # TODO: add button for loading project
+    bytes_data = uploaded_file.getvalue()
 
 if st.session_state['intro']:
     tactics = sx.get_tactics(src)
-    possible_win_conditions = ['UnlimitedResourcesMaxDamage']
 
     st.write("---")
     st.write("## Определите начальные условия игры")
     col3, col4 = st.columns(2)
-    col3.write('''
-    Прежде чем начать, вам необходимо определить модель злоумышленника, его цель и потенциальное поведение, определяемое 
-    "тактиками" в спецификации MITRE ATT&CK.
-    
-    Выбранные вами тактики будут влиять на набор атак, представленных в матрице игры, но не на набор мер защиты 
-    (так как симулируемая игра является игрой с ограниченной информацией).
-    
-    В форме справа вы можете найти настройки злоумышленника.
-    
-    По окончанию нажмите кнопку Продолжить, чтобы перейти на следующий этап установки условий.
-    
-    ''')
+    with col3:
+        st.write('''
+        Прежде чем начать, вам необходимо определить модель злоумышленника, его цель и потенциальное поведение, определяемое 
+        "тактиками" в спецификации MITRE ATT&CK.
+        
+        Выбранные вами тактики будут влиять на набор атак, представленных в матрице игры, но не на набор мер защиты 
+        (так как симулируемая игра является игрой с ограниченной информацией).
+        В форме справа вы можете найти настройки злоумышленника.
+        
+        По окончанию нажмите кнопку Продолжить, чтобы перейти на следующий этап установки условий.
+        ''')
 
     with col4:
         with st.form("attacker-settings"):
@@ -232,7 +227,9 @@ if st.session_state['intro']:
 
         with col7:
             st.write("В данном пункте необходимо выбрать критерии выбора стратегий для администратора и злоумышленника")
+            st.write("### Критерий администратора")
             if st.session_state["defender_criteria"] != '':
+                st.write("#### " + st.session_state["defender_criteria"].value[0])
                 st.write(st.session_state["defender_criteria"].value[1])
 
         with col8:
@@ -246,10 +243,11 @@ if st.session_state['intro']:
                 admin_criteria = st.selectbox(
                     label="Критерий администратора",
                     options=[c for c in DefenderCriteria],
-                    index=None,
+                    index=2,
                     key="form_admin_criteria",
                     placeholder="Выберите критерий",
                     format_func=lambda c: c.value[0],
+                    disabled=True,
                 )
                 attacker_criteria = st.selectbox(
                     label="Критерий злоумышленника",
@@ -258,6 +256,7 @@ if st.session_state['intro']:
                     key="form_attacker_criteria",
                     placeholder="Выберите критерий",
                     format_func=lambda c: c.value[0],
+                    disabled=True
                 )
                 algorithm = st.selectbox(
                     label="Алогритм игры",
@@ -265,14 +264,9 @@ if st.session_state['intro']:
                     options=[c for c in GameAlgorithm],
                     index=None,
                     key="form_algorithm",
-                    placeholder="Выбирете алгоритм",
+                    placeholder="Выберете алгоритм",
                     format_func=lambda c: c.value[0],
-                )
-                ucb_usage = st.checkbox(
-                    label="Использование UCB",
-                    key="form_ucb_usage",
-                    help="Вместо случайного выбора стратегий, в симуляциях Монте-Карло будет использоваться "
-                         "Upper-Confidence Bound, который предпологает более \"умный\" выбор стратегий"
+                    disabled=True
                 )
                 submit = st.form_submit_button("Сохранить", on_click=save_sim_settings)
 
@@ -281,35 +275,24 @@ if st.session_state['intro']:
 
             # 1. Составим список стратегий злоумышленника для каждой тактики.
             # Это все возможные уникальные комбинации техник для каждой тактики (по сути сочетание)
-            getting_ready_progress_text = f"Подготовка данных техник и мер защит"
 
-            tactics = sx.get_tactics_by_ids(thesrc=src,
-                                            tactics_ids=project_settings().attacker_tactics)
+            tactics = sx.get_tactics_by_ids(src, tactics_ids=project_settings().attacker_tactics)
 
             attacker_strategies = list()
             for tactic in tactics:
-                attacker_strategies += sx.get_techniques_by_tactics(thesrc=src,
-                                                                    tactics=[tactic.get("x_mitre_shortname")])
+                attacker_strategies += sx.get_techniques_by_tactics(src, tactics=[tactic.get("x_mitre_shortname")])
             # Sort lexicographically
             attacker_strategies.sort(key=operator.attrgetter("id"), reverse=True)
 
-            # calc_bar.progress(10, getting_ready_progress_text)
-
             defender_strategies = list()
             for app in project_settings().defender_apps:
-                defender_strategies += sx.get_mitigations_by_ids(thesrc=src,
-                                                                 migitation_ids=app.app_mitigations)
+                defender_strategies += sx.get_mitigations_by_ids(src, migitation_ids=app.app_mitigations)
             # Sort lexicographically
             defender_strategies.sort(key=operator.attrgetter("id"), reverse=True)
 
-            # st.write(defender_strategies)
-
-            # calc_bar.progress(20, getting_ready_progress_text)
-
-            # mitigations_available = sx.get_mitigations_by_ids(thesrc=src, migitation_ids=[app.app_mitigations for app in project_settings().defender_apps])
-
             # Комбинаторная система чисел,
-            # позволяет получать нужную комбинацию от её лексографического положения в наборе всех комбинаций без подсчета каждой комбинации
+            # позволяет получать нужную комбинацию от её лексографического положения
+            # в наборе всех комбинаций без подсчета каждой комбинации
             combination_resolver_attacks = CombinationGenerator(attacker_strategies)
             combination_resolver_mitigations = CombinationGenerator(defender_strategies)
 
@@ -337,7 +320,7 @@ if st.session_state['intro']:
             # Constructing matrix. lil_matrix for fast access and modification
             matrix_defender = sp.sparse.lil_matrix((st.session_state.sim_amount, M_for_defender), dtype=np.longlong)
 
-            with st.spinner('Считаем наивный случайный Монте-Карло'):
+            with st.spinner('Считаем полностью случайный Монте-Карло'):
                 for sim in range(st.session_state.sim_amount):
                     # Одна симуляция
                     i = random.randrange(0, M_for_attacker)
@@ -364,12 +347,12 @@ if st.session_state['intro']:
 
                 st.balloons()
 
-                st.write("### Диаграмма рассеяния значений")
+                st.write("### Диаграмма значений")
                 col10, col11 = st.columns(2)
 
                 with col10:
                     """
-                    На диаграмме представлены значения полученные в процессе выполнения Монте-Карло
+                    На диаграмме представлены значения полученные в процессе симуляций
                     
                     Важно отметить, так как число потенциальных стратегий слишком большое, в матрице количество строк
                     соответсвует количеству симуляций Монте-Карло. 
@@ -388,17 +371,18 @@ if st.session_state['intro']:
                 mat_exec_historic = []
 
                 sum_of_columns = matrix_defender.sum(axis=0)
-                sum_of_columns = sum_of_columns * (1/ M_for_defender)
+                sum_of_columns = np.ma.masked_equal(sum_of_columns, 0)
+                sum_of_columns = sum_of_columns * (1 / M_for_defender)
                 sum_of_columns = np.squeeze(np.asarray(sum_of_columns))
-                sum_masked = np.ma.masked_equal(sum_of_columns, 0)
-                print(sum_masked)
+                # sum_masked = np.ma.masked_equal(sum_of_columns, 0)
+                # print(sum_masked)
 
                 # st.write(sum_of_columns)
                 # mat_exec_historic.append(np.mean(raw_criteria_vals))
 
                 with col12:
                     fig_convergence = plt.figure()
-                    plt.stem(sum_masked)
+                    plt.stem(sum_of_columns)
                     st.pyplot(fig_convergence)
 
             # st.write(attacker_strategies)

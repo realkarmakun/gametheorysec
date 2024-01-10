@@ -34,19 +34,6 @@ class CombinationGenerator:
             if rank < cumulative:
                 break
         # Adjust rank to find position within k-combinations
-        # Let's say C(4, 2) in 2^4 set, let's checkout rank of combination 4
-        # Original combinoid is 4, should result in [0,1].
-        # Cumulative would be 10 since C(4,1) + C(4,2) = 4+6 = 10
-        # orignal_rank - cumulative = 4 - 10 = -6
-        # We can see that resulting number is like inverted index for combinoid in C(4,2)
-        # Proper rank should be in range of 0...C(4,2) which is 0...6
-        # So we just add C(4,2) on top of our newly inverted rank: -6 + 6 = 0
-        # Same would go for any consecutive number.
-        # For example let's examine rank 5 in 2^4:
-        # Original rank is 5, this should result in combination [0,2] in C(4,2) set
-        # Cumulative is 10 since C(4,1) + C(4,2) = 4 + 6 = 10
-        # 5 - 10 = -5 is inverted index of combinoid in C(4,2)
-        # -5 + C(4,2) = -5 + 6 = 1 which is correct combinoid in C(4,2)
         rank = (rank - cumulative) + comb(n, found_k)
 
         # Just a debug check to make sure algorithm will not fail, should never be called
