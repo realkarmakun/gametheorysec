@@ -186,6 +186,16 @@ def is_technique_mitigated_by_mitigations_specified(relations, technique_id, mit
                 result = True
     return result
 
+
+def does_mitigation_mitigates_technique(relations, technique_id, mitigation_id):
+    result = False
+    if mitigation_id in relations.keys():
+        for relation in relations[mitigation_id]:
+            if relation.get("object").get("id") == technique_id:
+                result = True
+    return result
+
+
 def remove_revoked_deprecated(stix_objects):
     """Remove any revoked or deprecated objects from queries made to the data source"""
     # Note we use .get() because the property may not be present in the JSON data. The default is False

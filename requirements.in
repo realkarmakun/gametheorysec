@@ -1,6 +1,7 @@
 streamlit
 stix2
 pandas
-matplotlib
+plotly
 numpy
 intvalpy
+scipy

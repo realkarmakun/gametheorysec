@@ -2,16 +2,20 @@ import itertools
 import operator
 import random
 
+import matspy
 import streamlit as st
 from intvalpy import Interval
 
 import stixlib as sx
 import numpy as np
+import scipy as sp
 import matplotlib.pyplot as plt
+import plotly.express as px
 import pandas as pd
+import matspy
 
 from maths import CombinationGenerator
-from projectsharablestate import ProjectSettings, AppEntry, DefenderCriteria, AttackerCriteria
+from projectsharablestate import ProjectSettings, AppEntry, DefenderCriteria, AttackerCriteria, GameAlgorithm
 
 
 @st.cache_data(persist=True)
@@ -21,10 +25,26 @@ def cached_get_src():
     return thesrc
 
 
+def convert_n_range_to_0_100(old_min, old_max, new_min, new_max, old_value):
+    old_range = old_max - old_min
+    new_range = new_max - new_min
+    return (((old_value - old_min) * new_range) / old_range) + new_min
+
+
 # @st.cache_data(presist=True)
 def cached_get_technique_to_mitig_relations(thesrc):
     technique_to_mitig_relations = sx.technique_mitigated_by_mitigations(thesrc)
     return technique_to_mitig_relations
+
+
+def find_price_for_mitigation(mitigation_id):
+    price_val = 0
+    loss_val = Interval(0, 0)
+    for da in project_settings().defender_apps:
+        if mitigation_id in da.app_mitigations:
+            price_val += da.app_price
+            loss_val += da.app_loss
+    return price_val, loss_val
 
 
 def save_sim_settings():
@@ -43,13 +63,14 @@ def save_attacker_settings():
 def add_app_entry():
     if not hasattr(project_settings(), 'defender_apps'):
         st.session_state["project_settings"].defender_apps = []
-
-    new_entry = AppEntry
-    new_entry.app_name = st.session_state.form_app_name
-    new_entry.app_price = st.session_state.form_app_price
-    new_entry.app_loss = Interval(st.session_state.form_app_loss[0], st.session_state.form_app_loss[1])
-    new_entry.app_mitigations = [m.get("id") for m in st.session_state.form_app_mitig]
-    st.session_state["project_settings"].defender_apps.append(new_entry)
+    st.session_state["project_settings"].defender_apps.append(AppEntry(app_name=st.session_state.form_app_name,
+                                                                       app_price=st.session_state.form_app_price,
+                                                                       app_loss=Interval(
+                                                                           st.session_state.form_app_loss[0],
+                                                                           st.session_state.form_app_loss[1]),
+                                                                       app_mitigations=[m.get("id") for m in
+                                                                                        st.session_state.form_app_mitig]
+                                                                       ))
 
 
 def project_settings() -> ProjectSettings:
@@ -200,7 +221,7 @@ if st.session_state['intro']:
 
         if hasattr(project_settings(), 'defender_apps') and project_settings().defender_apps:
             st.write("#### Текущий список приложений")
-            defender_apps_df = pd.DataFrame([da.as_dict(da) for da in project_settings().defender_apps])
+            defender_apps_df = pd.DataFrame([da.as_dict() for da in project_settings().defender_apps])
             st.dataframe(defender_apps_df)
 
         st.write('---')
@@ -238,7 +259,15 @@ if st.session_state['intro']:
                     placeholder="Выберите критерий",
                     format_func=lambda c: c.value[0],
                 )
-
+                algorithm = st.selectbox(
+                    label="Алогритм игры",
+                    help="Учитывайте, что не все алгоритмы нацелены на получение оптимальной стратегии или равновесия Нэша",
+                    options=[c for c in GameAlgorithm],
+                    index=None,
+                    key="form_algorithm",
+                    placeholder="Выбирете алгоритм",
+                    format_func=lambda c: c.value[0],
+                )
                 ucb_usage = st.checkbox(
                     label="Использование UCB",
                     key="form_ucb_usage",
@@ -253,7 +282,6 @@ if st.session_state['intro']:
             # 1. Составим список стратегий злоумышленника для каждой тактики.
             # Это все возможные уникальные комбинации техник для каждой тактики (по сути сочетание)
             getting_ready_progress_text = f"Подготовка данных техник и мер защит"
-            calc_bar = st.progress(0, text=getting_ready_progress_text)
 
             tactics = sx.get_tactics_by_ids(thesrc=src,
                                             tactics_ids=project_settings().attacker_tactics)
@@ -265,7 +293,7 @@ if st.session_state['intro']:
             # Sort lexicographically
             attacker_strategies.sort(key=operator.attrgetter("id"), reverse=True)
 
-            calc_bar.progress(10, getting_ready_progress_text)
+            # calc_bar.progress(10, getting_ready_progress_text)
 
             defender_strategies = list()
             for app in project_settings().defender_apps:
@@ -274,9 +302,9 @@ if st.session_state['intro']:
             # Sort lexicographically
             defender_strategies.sort(key=operator.attrgetter("id"), reverse=True)
 
-            st.write(defender_strategies)
+            # st.write(defender_strategies)
 
-            calc_bar.progress(20, getting_ready_progress_text)
+            # calc_bar.progress(20, getting_ready_progress_text)
 
             # mitigations_available = sx.get_mitigations_by_ids(thesrc=src, migitation_ids=[app.app_mitigations for app in project_settings().defender_apps])
 
@@ -287,24 +315,91 @@ if st.session_state['intro']:
 
             M_for_defender = 2 ** len(defender_strategies) - 1
             M_for_attacker = 2 ** len(attacker_strategies) - 1
-            col10, col11 = st.columns(2)
 
-            with col10:
-
-                f'''
+            st.write(f'''
                 ### Количество стратегий:
-                
+
                 Формула:
-                
+
                 $$M = 2^S - 1$$, S - число стратегий 
-                
-                Для атакующего: $$M_A = 2^{{ {len(attacker_strategies)} }} - 1 = {M_for_attacker}$$
-                Для защищающего: $$M_A = 2^{{{len(defender_strategies)}}} - 1 = {M_for_defender}$$
-                '''
 
-            t_to_m_relations = cached_get_technique_to_mitig_relations(src)
+                Для атакующего: $$M_A = 2^{{ {len(attacker_strategies)} }} - 1 = $$ {M_for_attacker}
 
-            monte_carlo_vals = []
+                Для защищающего: $$M_A = 2^{{{len(defender_strategies)}}} - 1 = $$ {M_for_defender}
+                ''')
+
+            m_to_t_relation = sx.mitigation_mitigates_techniques(src)
+
+            monte_carlo_vals_price = dict()
+            monte_carlo_vals_loss = dict()
+
+            # calc_bar = st.progress(0.0, text=getting_ready_progress_text)
+            # Constructing matrix. lil_matrix for fast access and modification
+            matrix_defender = sp.sparse.lil_matrix((st.session_state.sim_amount, M_for_defender), dtype=np.longlong)
+
+            with st.spinner('Считаем наивный случайный Монте-Карло'):
+                for sim in range(st.session_state.sim_amount):
+                    # Одна симуляция
+                    i = random.randrange(0, M_for_attacker)
+                    j = random.randrange(0, M_for_defender)
+                    # print(f'{i}, {j}')
+                    attack_comb = combination_resolver_attacks.unrankVaryingLengthCombination(i)
+                    mitig_comb = combination_resolver_mitigations.unrankVaryingLengthCombination(j)
+                    price_value = 0
+                    loss_value = Interval(0, 0)
+                    for m in mitig_comb:
+                        for a in attack_comb:
+                            is_mitigated = sx.does_mitigation_mitigates_technique(
+                                relations=m_to_t_relation,
+                                technique_id=a.get("id"),
+                                mitigation_id=m.get("id"))
+                            # print(is_mitigated)
+                            if is_mitigated:
+                                # Returns tuple: 0 is app price, 1 is app loss
+                                values = find_price_for_mitigation(m.get("id"))
+                                # print(values)
+                                if values[0] != 0:
+                                    matrix_defender[sim, j] = values[0]
+                    matrix_defender = matrix_defender.tocsr()
+
+                st.balloons()
+
+                st.write("### Диаграмма рассеяния значений")
+                col10, col11 = st.columns(2)
+
+                with col10:
+                    """
+                    На диаграмме представлены значения полученные в процессе выполнения Монте-Карло
+                    
+                    Важно отметить, так как число потенциальных стратегий слишком большое, в матрице количество строк
+                    соответсвует количеству симуляций Монте-Карло. 
+                    Так как мы не будем использовать значения не полученные в процессе выполнения Монте-Карло,
+                     нет смысла подсчитывать значения для этих комбинаций
+                    """
+
+                with col11:
+                    fig, ax = matspy.spy_to_mpl(matrix_defender)
+                    st.pyplot(fig)
+
+                col12, col13 = st.columns(2)
+
+                # Calculate criteria values:
+                raw_criteria_vals = []
+                mat_exec_historic = []
+
+                sum_of_columns = matrix_defender.sum(axis=0)
+                sum_of_columns = sum_of_columns * (1/ M_for_defender)
+                sum_of_columns = np.squeeze(np.asarray(sum_of_columns))
+                sum_masked = np.ma.masked_equal(sum_of_columns, 0)
+                print(sum_masked)
+
+                # st.write(sum_of_columns)
+                # mat_exec_historic.append(np.mean(raw_criteria_vals))
+
+                with col12:
+                    fig_convergence = plt.figure()
+                    plt.stem(sum_masked)
+                    st.pyplot(fig_convergence)
 
             # st.write(attacker_strategies)
 
