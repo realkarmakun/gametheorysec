@@ -1,7 +1,9 @@
 import operator
 import random
 
+import intvalpy
 import matplotlib.pyplot as plt
+import plotly.express as px
 import matspy
 import numpy as np
 import pandas as pd
@@ -40,8 +42,10 @@ def find_price_for_mitigation(mitigation_id):
         if mitigation_id in da.app_mitigations:
             price_val += da.app_price
             loss_val += da.app_loss
-    return price_val, loss_val
+    return price_val + loss_val.mid.real
 
+def interactive():
+    st.session_state["interactive"] = not st.session_state["interactive"]
 
 def save_sim_settings():
     st.session_state["defender_criteria"] = st.session_state.form_admin_criteria
@@ -80,6 +84,7 @@ src = cached_get_src()
 if "intro" not in st.session_state:
     st.session_state["intro"] = False
     st.session_state["ready_to_sim"] = False
+    st.session_state["interactive"] = False
 
 if "newproject" not in st.session_state:
     st.session_state["newproject"] = True
@@ -149,6 +154,11 @@ if st.session_state['intro']:
                 key="form_app_max_interval",
                 label='Максимальный возможный ущерб',
                 help='Необходим для выбора интервала ниже (в у.е.)'
+            )
+            bimatrix = st.toggle(
+                label="Построение матрицы для злоумышленника",
+                help="Включение делает игру биматричной",
+                disabled=True
             )
             submit = st.form_submit_button('Сохранить', on_click=save_attacker_settings)
 
@@ -313,12 +323,9 @@ if st.session_state['intro']:
 
             m_to_t_relation = sx.mitigation_mitigates_techniques(src)
 
-            monte_carlo_vals_price = dict()
-            monte_carlo_vals_loss = dict()
-
-            # calc_bar = st.progress(0.0, text=getting_ready_progress_text)
             # Constructing matrix. lil_matrix for fast access and modification
-            matrix_defender = sp.sparse.lil_matrix((st.session_state.sim_amount, M_for_defender), dtype=np.longlong)
+            matrix_defender = sp.sparse.lil_array((st.session_state.sim_amount, M_for_defender))
+            map_sims_to_m_combs = []
 
             with st.spinner('Считаем полностью случайный Монте-Карло'):
                 for sim in range(st.session_state.sim_amount):
@@ -339,51 +346,101 @@ if st.session_state['intro']:
                             # print(is_mitigated)
                             if is_mitigated:
                                 # Returns tuple: 0 is app price, 1 is app loss
-                                values = find_price_for_mitigation(m.get("id"))
+                                value = find_price_for_mitigation(m.get("id"))
                                 # print(values)
-                                if values[0] != 0:
-                                    matrix_defender[sim, j] = values[0]
+                                if value != Interval(0, 0):
+                                    map_sims_to_m_combs.append(j)
+                                    matrix_defender[sim, j] = matrix_defender[sim, j] + value
                     matrix_defender = matrix_defender.tocsr()
 
-                st.balloons()
+            st.balloons()
 
-                st.write("### Диаграмма значений")
-                col10, col11 = st.columns(2)
+            st.write("### Диаграмма значений")
+            col10, col11 = st.columns(2)
 
-                with col10:
-                    """
-                    На диаграмме представлены значения полученные в процессе симуляций
+            with col10:
+                """
+                На диаграмме представлены значения полученные в процессе симуляций
                     
-                    Важно отметить, так как число потенциальных стратегий слишком большое, в матрице количество строк
-                    соответсвует количеству симуляций Монте-Карло. 
-                    Так как мы не будем использовать значения не полученные в процессе выполнения Монте-Карло,
-                     нет смысла подсчитывать значения для этих комбинаций
-                    """
+                Важно отметить, так как число потенциальных стратегий слишком большое, в матрице количество строк
+                соответсвует количеству симуляций Монте-Карло. 
+                Так как мы не будем использовать значения не полученные в процессе выполнения Монте-Карло,
+                нет смысла подсчитывать значения для этих комбинаций
+                """
 
-                with col11:
+            with col11:
                     fig, ax = matspy.spy_to_mpl(matrix_defender)
                     st.pyplot(fig)
+            """
+            ---
+            ### Результаты работы
+            """
 
-                col12, col13 = st.columns(2)
+            sum_of_columns = matrix_defender.sum(axis=0)
+            sum_of_columns = np.ma.masked_equal(sum_of_columns, 0)
+            sum_of_columns = sum_of_columns * (1 / M_for_defender)
+            # Поиск критерия
+            found_criteria_val = np.min(sum_of_columns)
+            comb_index_for_criteria = np.argmin(sum_of_columns)
+            actual_comb_index = map_sims_to_m_combs[comb_index_for_criteria]
 
-                # Calculate criteria values:
-                raw_criteria_vals = []
-                mat_exec_historic = []
+            comb_for_criteria = combination_resolver_mitigations.unrankVaryingLengthCombination(actual_comb_index)
 
-                sum_of_columns = matrix_defender.sum(axis=0)
-                sum_of_columns = np.ma.masked_equal(sum_of_columns, 0)
-                sum_of_columns = sum_of_columns * (1 / M_for_defender)
-                sum_of_columns = np.squeeze(np.asarray(sum_of_columns))
-                # sum_masked = np.ma.masked_equal(sum_of_columns, 0)
-                # print(sum_masked)
+            col12, col13 = st.columns(2)
 
-                # st.write(sum_of_columns)
-                # mat_exec_historic.append(np.mean(raw_criteria_vals))
+            with col12:
+                f'''
+                #### Найденная стратегия Администратора
+                
+                Согласно выбранному критерию была найдена стратегия защиты:
+                
+                $$W_j(A) =$$ {found_criteria_val}
+                
+                Значение в матрице метода Монте-Карло = {comb_index_for_criteria}
+                
+                Индекс в платежной матрице:
+                
+                $$j = $$ {actual_comb_index}
+                
+                Данной стратегии соответсвует комбинация мер защиты:
+                '''
+                strategy_data_display = []
+                for m in comb_for_criteria:
+                    name = m.get("name")
+                    url = ""
+                    mitre_id = ''
+                    for ref in m.get("external_references"):
+                        if ref.get("source_name") == "mitre-attack":
+                            url = ref.get("url")
+                            mitre_id = ref.get("external_id")
+                            break
+                    strategy_data_display.append((mitre_id, name, url))
 
-                with col12:
-                    fig_convergence = plt.figure()
-                    plt.stem(sum_of_columns)
-                    st.pyplot(fig_convergence)
+                resulting_strategy_df = pd.DataFrame(strategy_data_display, columns=["mitre_id", "name", "url"])
+                st.dataframe(resulting_strategy_df,
+                             column_config={
+                                 "url": st.column_config.LinkColumn("URL")
+                             })
+
+            with col13:
+                '#### График критериев для Администратора'
+                #'(интерактивный, наведите мышку)'
+                fig_laplace = px.line(y=sum_of_columns, x=range(len(sum_of_columns)))
+                fig_laplace.update_traces(connectgaps=True)
+                fig_laplace.update_layout(yaxis={"title": "Значение критерия", "range": [0, None]},
+                                          xaxis={"title": "Индекс стратегии меры защиты в матрице метода Монте-Карло"})
+                st.plotly_chart(fig_laplace)
+
+
+
+            # Calculate criteria values:
+
+
+            # sum_masked = np.ma.masked_equal(sum_of_columns, 0)
+            # print(sum_masked)
+
+            # st.write(sum_of_columns)
+            # mat_exec_historic.append(np.mean(raw_criteria_vals))
 
             # st.write(attacker_strategies)
 
