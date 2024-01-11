@@ -430,30 +430,3 @@ if st.session_state['intro']:
                 fig_laplace.update_layout(yaxis={"title": "Значение критерия", "range": [0, None]},
                                           xaxis={"title": "Индекс стратегии меры защиты в матрице метода Монте-Карло"})
                 st.plotly_chart(fig_laplace)
-
-
-
-            # Calculate criteria values:
-
-
-            # sum_masked = np.ma.masked_equal(sum_of_columns, 0)
-            # print(sum_masked)
-
-            # st.write(sum_of_columns)
-            # mat_exec_historic.append(np.mean(raw_criteria_vals))
-
-            # st.write(attacker_strategies)
-
-            # 1.1.2. Получаем список атак из списка тактик
-            techniques = sx.get_techniques_by_tactics(thesrc=src, tactics=[t.get("x_mitre_shortname") for t in tactics])
-
-            # 1.1.3. Удаляем старые и неподдерживаемые техники
-            techniques = sx.remove_revoked_deprecated(techniques)
-            # 1.1.4. Получаем меры защиты
-
-            # mitigations = sx.get_mitigations_by_ids(thesrc=src, migitation_ids=all_mitigations)
-
-            # mitigations = sx.remove_revoked_deprecated(sx.get_mitigations(src))
-
-            # techniques_df = pd.DataFrame(techniques_data)
-            # st.dataframe(techniques_df.loc[:, ~techniques_df.columns.isin(['kill_chain_phases', 'external_references'])])
