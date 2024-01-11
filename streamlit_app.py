@@ -1,5 +1,6 @@
 import operator
 import random
+import time
 
 import intvalpy
 import matplotlib.pyplot as plt
@@ -10,6 +11,7 @@ import pandas as pd
 import scipy as sp
 import streamlit as st
 from intvalpy import Interval
+from humanize.time import precisedelta
 
 import stixlib as sx
 from maths import CombinationGenerator
@@ -324,36 +326,43 @@ if st.session_state['intro']:
             m_to_t_relation = sx.mitigation_mitigates_techniques(src)
 
             # Constructing matrix. lil_matrix for fast access and modification
+            progress_text = "Выполняем работу. Пожалуйста подождите."
+            progress_bar = st.progress(0.0, text=progress_text)
+            time_taken = time.time()
+
             matrix_defender = sp.sparse.lil_array((st.session_state.sim_amount, M_for_defender))
             map_sims_to_m_combs = []
 
-            with st.spinner('Считаем полностью случайный Монте-Карло'):
-                for sim in range(st.session_state.sim_amount):
-                    # Одна симуляция
-                    i = random.randrange(0, M_for_attacker)
-                    j = random.randrange(0, M_for_defender)
-                    # print(f'{i}, {j}')
-                    attack_comb = combination_resolver_attacks.unrankVaryingLengthCombination(i)
-                    mitig_comb = combination_resolver_mitigations.unrankVaryingLengthCombination(j)
-                    price_value = 0
-                    loss_value = Interval(0, 0)
-                    for m in mitig_comb:
-                        for a in attack_comb:
-                            is_mitigated = sx.does_mitigation_mitigates_technique(
-                                relations=m_to_t_relation,
-                                technique_id=a.get("id"),
-                                mitigation_id=m.get("id"))
-                            # print(is_mitigated)
-                            if is_mitigated:
-                                # Returns tuple: 0 is app price, 1 is app loss
-                                value = find_price_for_mitigation(m.get("id"))
-                                # print(values)
-                                if value != Interval(0, 0):
-                                    map_sims_to_m_combs.append(j)
-                                    matrix_defender[sim, j] = matrix_defender[sim, j] + value
-                    matrix_defender = matrix_defender.tocsr()
+            for sim in range(st.session_state.sim_amount):
+                # Одна симуляция
+                i = random.randrange(0, M_for_attacker)
+                j = random.randrange(0, M_for_defender)
+                # print(f'{i}, {j}')
+                attack_comb = combination_resolver_attacks.unrankVaryingLengthCombination(i)
+                mitig_comb = combination_resolver_mitigations.unrankVaryingLengthCombination(j)
+                price_value = 0
+                loss_value = Interval(0, 0)
+                for m in mitig_comb:
+                    for a in attack_comb:
+                        is_mitigated = sx.does_mitigation_mitigates_technique(
+                            relations=m_to_t_relation,
+                            technique_id=a.get("id"),
+                            mitigation_id=m.get("id"))
+                        # print(is_mitigated)
+                        if is_mitigated:
+                            # Returns tuple: 0 is app price, 1 is app loss
+                            value = find_price_for_mitigation(m.get("id"))
+                            # print(values)
+                            if value != Interval(0, 0):
+                                map_sims_to_m_combs.append(j)
+                                matrix_defender[sim, j] = matrix_defender[sim, j] + value
+                progress_bar.progress(sim/ st.session_state.sim_amount, text=progress_text)
+            matrix_defender = matrix_defender.tocsr()
 
+            time_taken -= time.time()
+            st.success(f'Метод Монте-Карло занял: {precisedelta(time_taken, minimum_unit="microseconds")}')
             st.balloons()
+            progress_bar.empty()
 
             st.write("### Диаграмма значений")
             col10, col11 = st.columns(2)
