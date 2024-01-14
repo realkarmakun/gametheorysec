@@ -60,7 +60,8 @@ class AttackerCriteria(Enum):
 
 
 class GameAlgorithm(Enum):
-    PlainRandomMonteCarlo = ("Наивный случайный Монте-Карло", "plainrandommontecarlo")
+    MonteCarlo = ("Монте-Карло", "plainrandommontecarlo")
+    UpperConfidenceBound = ("Upper-Confidence-Bound", "ucb")
 
     def __str__(self):
         return str(self.value[0])
