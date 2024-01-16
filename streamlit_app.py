@@ -53,6 +53,22 @@ def show_result(found_crit, crit_index):
                 ''')
 
 
+def get_strategy_for_comb(combination):
+    strategy_data_display = []
+    for m in comb_for_criteria:
+        name = m.get("name")
+        url = ""
+        mitre_id = ''
+        for ref in m.get("external_references"):
+            if ref.get("source_name") == "mitre-attack":
+                url = ref.get("url")
+                mitre_id = ref.get("external_id")
+                break
+        strategy_data_display.append((mitre_id, name, url))
+
+    return pd.DataFrame(strategy_data_display, columns=["mitre_id", "name", "url"])
+
+
 # mean_x_yi - текущее среднее значение для стратегии y_i
 # n_yi  = уже проведенные симуляции
 def calc_radical_ucb(mean_x_yi, n_yi, n, b):
@@ -93,7 +109,7 @@ def ucb(mitig_max, att_max, simulations_amount, comb_res_m, comb_res_a, b):
         radical_values[j] = calc_radical_ucb(current_mean_for_j, already_ran_sim_counts[j], 1, b)
         progress_bar.progress(j / mitig_max, text=progress_text)
 
-    for n_yi in range(1, simulations_amount + 1):
+    for n_yi in range(1, simulations_amount):
         # Находим для какой стратегии защиты необходимо провести вычисления
         current_j = radical_values.argmin()
         # Выбираем случайную стратегию атаки
@@ -121,7 +137,6 @@ def ucb(mitig_max, att_max, simulations_amount, comb_res_m, comb_res_a, b):
 
     time_taken -= time.time()
     st.success(f'Upper-Confidence-Bound занял: {precisedelta(time_taken, minimum_unit="microseconds")}')
-    st.write(radical_values)
     st.balloons()
     progress_bar.empty()
     return matrix
@@ -139,7 +154,7 @@ def interactive():
 
 def save_sim_settings():
     project_settings().defender_criteria = st.session_state.form_admin_criteria
-    #project_settings().attacker_criteria = st.session_state.form_attacker_criteria
+    # project_settings().attacker_criteria = st.session_state.form_attacker_criteria
     # st.session_state["sim_amount"] = st.session_state.form_sim_amount
     # st.session_state["algorithm"] = st.session_state.form_algorithm
     st.session_state["criteria_chosen"] = True
@@ -439,11 +454,11 @@ if st.session_state['intro']:
             # Разряженная матрица значений
 
             # matrix_defender = sp.sparse.lil_matrix((N, M_for_defender), dtype=np.longlong)
-            #chosen_def_crit = st.session_state.defender_criteria
+            # chosen_def_crit = st.session_state.defender_criteria
 
             matrix_defender = np.zeros((N, M_for_defender))
             if "algorithm" in st.session_state and st.session_state["algorithm"] == GameAlgorithm.MonteCarlo:
-                #matrix_defender = np.ndarray((N, M_for_defender), dtype=np.longlong)
+                # matrix_defender = np.ndarray((N, M_for_defender), dtype=np.longlong)
 
                 time_taken = time.time()
 
@@ -513,6 +528,7 @@ if st.session_state['intro']:
 
             j_index = 0
             found_criteria_val = 0
+            top_three = None
             if project_settings().defender_criteria == DefenderCriteria.LAPLACE_REASON:
                 # Найдем сумму для каждого стоблца
                 sum_of_columns = matrix_defender.sum(axis=0).flatten()
@@ -524,6 +540,8 @@ if st.session_state['intro']:
                 found_criteria_val = np.min(j_criteria)
                 # Индекс стратегии защиты для найденного критерия
                 j_index = np.argmin(j_criteria)
+
+                top_three = np.argpartition(j_criteria, 3)
 
                 col1_laplace, col2_laplace = st.columns(2)
                 with col1_laplace:
@@ -551,9 +569,12 @@ if st.session_state['intro']:
                 # Найдем максимумы для каждой стратегии
                 maxes_in_j = matrix_defender.max(axis=0).flatten()
                 # Маскируем некорректные значения
-                maxes_in_j = np.ma.masked_equal(maxes_in_j, np.NaN)
+                maxes_in_j = np.ma.masked_equal(maxes_in_j, 0)
+                # Находим критерий для стратегии и индекс
                 found_criteria_val = np.min(maxes_in_j)
                 j_index = np.argmin(maxes_in_j)
+
+                top_three = np.argpartition(maxes_in_j, 3)
 
                 col1_wald, col2_wald = st.columns(2)
                 with col1_wald:
@@ -565,19 +586,24 @@ if st.session_state['intro']:
                     st.plotly_chart(fig_wald)
 
             elif project_settings().defender_criteria == DefenderCriteria.SAVAGE_MINIMAX:
+                # Для критерия Сэвиджа строится отдельная матрица рисков
                 savage_matrix = np.ndarray((N, M_for_defender))
 
                 mins_in_j = matrix_defender.min(axis=0).flatten()
                 # Маскируем некорректные значения
                 maxes_in_j = np.ma.masked_equal(mins_in_j, 0)
+
+                # Наполняем матрицу рисков
                 for i in range(N):
                     for j in range(M_for_defender):
                         savage_matrix[i, j] = matrix_defender[i, j] - mins_in_j[j]
-
+                # Находим критерий для стратегии и индекс
                 maxes_in_j_savage = savage_matrix.max(axis=0).flatten()
                 maxes_in_j_savage = np.ma.masked_equal(maxes_in_j_savage, np.NaN)
                 found_criteria_val = np.min(maxes_in_j_savage)
                 j_index = np.argmin(maxes_in_j_savage)
+
+                top_three = np.argpartition(maxes_in_j, 3)
 
                 col1_savage, col2_savage = st.columns(2)
                 with col1_savage:
@@ -593,23 +619,36 @@ if st.session_state['intro']:
                     fig_savage.update_traces(connectgaps=True)
                     st.plotly_chart(fig_savage)
 
-            comb_for_criteria = combination_resolver_mitigations.unrankVaryingLengthCombination(j_index)
 
-            "Найденому критерию соответсвует комбинация:"
-            strategy_data_display = []
-            for m in comb_for_criteria:
-                name = m.get("name")
-                url = ""
-                mitre_id = ''
-                for ref in m.get("external_references"):
-                    if ref.get("source_name") == "mitre-attack":
-                        url = ref.get("url")
-                        mitre_id = ref.get("external_id")
-                        break
-                strategy_data_display.append((mitre_id, name, url))
+            if top_three is not None:
+                "Топ 3 стратегий:"
+                col1_final, col2_final, col3_final = st.columns(3)
+                kth_vals = np.sort(top_three[:3])
+                resulting_strategies = []
+                with col1_final:
+                    f"Топ 1: Для стратегии $$j =$$ {top_three[0]} комбинация:"
+                    comb_for_criteria = combination_resolver_mitigations.unrankVaryingLengthCombination(top_three[0])
+                    strat = get_strategy_for_comb(comb_for_criteria)
+                    st.dataframe(strat)
+                with col2_final:
+                    f"Топ 2: Для стратегии $$j =$$ {top_three[1]} комбинация:"
+                    comb1_for_criteria = combination_resolver_mitigations.unrankVaryingLengthCombination(top_three[1])
+                    strat1 = get_strategy_for_comb(comb1_for_criteria)
+                    st.dataframe(strat1)
+                with col3_final:
+                    f"Топ 3:Для стратегии $$j =$$ {top_three[2]} комбинация:"
+                    comb2_for_criteria = combination_resolver_mitigations.unrankVaryingLengthCombination(top_three[2])
+                    strat2 = get_strategy_for_comb(comb2_for_criteria)
+                    st.dataframe(strat2)
 
-            resulting_strategy_df = pd.DataFrame(strategy_data_display, columns=["mitre_id", "name", "url"])
-            st.dataframe(resulting_strategy_df,
-                         column_config={
-                             "url": st.column_config.LinkColumn("URL")
-                         })
+
+
+
+            else:
+                comb_for_criteria = combination_resolver_mitigations.unrankVaryingLengthCombination(j_index)
+                f"Для стратегии $$j =$$ {j_index} комбинация:"
+                strat = get_strategy_for_comb(comb_for_criteria)
+                st.dataframe(strat,
+                             column_config={
+                                 "url": st.column_config.LinkColumn("URL")
+                             })
