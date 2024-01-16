@@ -53,45 +53,6 @@ def show_result(found_crit, crit_index):
                 ''')
 
 
-def classic_monte_carlo(mitig_max, att_max, simulations_amount, comb_res_m, comb_res_a):
-    matrix = np.ndarray((simulations_amount, mitig_max), dtype=np.longlong)
-
-    time_taken = time.time()
-
-    progress_text = "Выполняем классический Монте-Карло. Пожалуйста подождите. "
-    progress_bar = st.progress(0.0, text=progress_text)
-
-    # Проводим для каждой стратегии N симуляций
-    for j in range(mitig_max):
-        # Комбинация дле текущей стратегии защиты
-        mitig_comb = comb_res_m.unrankVaryingLengthCombination(j)
-
-        # Проводим N симуляций для текущей стратегии
-        for n in range(simulations_amount):
-            # Случайно выбранная стратегия атаки
-            i = random.randrange(0, att_max)
-            attack_comb = comb_res_a.unrankVaryingLengthCombination(i)
-
-            # Проверяем что каждая мера защиты в стратегии защиты защищает от стратегий атаки
-            # Если хотя бы одна из стратегий защищиает current_val > 0
-            for m in mitig_comb:
-                for a in attack_comb:
-                    is_mitigated = sx.does_mitigation_mitigates_technique(
-                        relations=m_to_t_relation,
-                        technique_id=a.get("id"),
-                        mitigation_id=m.get("id"))
-                    if is_mitigated:
-                        matrix[n, j] += find_price_for_mitigation(m.get("id"))
-
-        progress_bar.progress(j / M_for_defender, text=progress_text + f"$$j =$$ {j}")
-
-    time_taken -= time.time()
-    st.success(f'Метод Монте-Карло занял: {precisedelta(time_taken, minimum_unit="microseconds")}')
-    st.balloons()
-    progress_bar.empty()
-    return matrix
-
-
 # mean_x_yi - текущее среднее значение для стратегии y_i
 # n_yi  = уже проведенные симуляции
 def calc_radical_ucb(mean_x_yi, n_yi, n, b):
@@ -130,14 +91,11 @@ def ucb(mitig_max, att_max, simulations_amount, comb_res_m, comb_res_a, b):
         current_yi = np.ma.masked_equal(matrix[:, j], 0)
         current_mean_for_j = np.mean(current_yi)
         radical_values[j] = calc_radical_ucb(current_mean_for_j, already_ran_sim_counts[j], 1, b)
-        progress_bar.progress(j / mitig_max, text=progress_text + f" {j} / {mitig_max}")
+        progress_bar.progress(j / mitig_max, text=progress_text)
 
-    latest_j = radical_values.argmin()
-    for n_yi in range(1, simulations_amount+1):
+    for n_yi in range(1, simulations_amount + 1):
         # Находим для какой стратегии защиты необходимо провести вычисления
         current_j = radical_values.argmin()
-        #if (latest_j != current_j):
-        #    st.toast("UCB сменил стратегию!")
         # Выбираем случайную стратегию атаки
         mitig_comb = comb_res_m.unrankVaryingLengthCombination(current_j)
         i = random.randrange(0, att_max)
@@ -153,10 +111,13 @@ def ucb(mitig_max, att_max, simulations_amount, comb_res_m, comb_res_a, b):
         # Отмечаем что для данной стратегии проведена симуляция
         already_ran_sim_counts[current_j] += 1
         # Обновляем значение радикала с учетом подсчитанных данных
-        current_yi = np.ma.masked_equal(matrix[:, current_j], 0)
-        current_mean_for_j = np.mean(current_yi)
-        radical_values[current_j] = calc_radical_ucb(current_mean_for_j, already_ran_sim_counts[current_j], n_yi, b)
-        progress_bar.progress(n_yi / simulations_amount, text=progress_text + f" $$n_y = $$ {n_yi}, для $$j=$$ {current_j} радикал = {radical_values[current_j]}")
+        for j in range(mitig_max):
+            current_yi = np.ma.masked_equal(matrix[:, j], 0)
+            current_mean_for_j = np.mean(current_yi)
+            radical_values[j] = calc_radical_ucb(current_mean_for_j, already_ran_sim_counts[j], n_yi, b)
+
+        progress_bar.progress(n_yi / simulations_amount,
+                              text=progress_text + f" $$n_y = $$ {n_yi}, для $$j=$$ {current_j} радикал = {radical_values[current_j]}")
 
     time_taken -= time.time()
     st.success(f'Upper-Confidence-Bound занял: {precisedelta(time_taken, minimum_unit="microseconds")}')
@@ -177,11 +138,10 @@ def interactive():
 
 
 def save_sim_settings():
-    st.session_state["defender_criteria"] = st.session_state.form_admin_criteria
-    st.session_state["attacker_criteria"] = st.session_state.form_attacker_criteria
+    project_settings().defender_criteria = st.session_state.form_admin_criteria
+    #project_settings().attacker_criteria = st.session_state.form_attacker_criteria
     # st.session_state["sim_amount"] = st.session_state.form_sim_amount
     # st.session_state["algorithm"] = st.session_state.form_algorithm
-    st.session_state["ready_to_sim"] = False
     st.session_state["criteria_chosen"] = True
 
 
@@ -222,13 +182,13 @@ if "intro" not in st.session_state:
     st.session_state["intro"] = False
     st.session_state["ready_to_sim"] = False
     st.session_state["criteria_chosen"] = False
-    st.session_state["interactive"] = False
 
 if "newproject" not in st.session_state:
     st.session_state["newproject"] = True
     new_project = ProjectSettings
     new_project.mitre_domain = "enterprise-attack"
     new_project.mitre_version = "14.1"
+    new_project.defender_criteria = DefenderCriteria.LAPLACE_REASON
     st.session_state["project_settings"] = ProjectSettings
 
 col1, col2 = st.columns([2, 1])
@@ -376,9 +336,8 @@ if st.session_state['intro']:
         with col7:
             st.write("В данном пункте необходимо выбрать критерии выбора стратегий для администратора и злоумышленника")
             st.write("### Критерий администратора")
-            if st.session_state["defender_criteria"] != '':
-                st.write("#### " + st.session_state["defender_criteria"].value[0])
-                st.write(st.session_state["defender_criteria"].value[1])
+            st.write("#### " + project_settings().defender_criteria.value[0])
+            st.write(project_settings().defender_criteria.value[1])
 
         with col8:
             with st.form("sim-settings"):
@@ -418,14 +377,14 @@ if st.session_state['intro']:
                         key="form_algorithm",
                         placeholder="Выберете алгоритм",
                         format_func=lambda c: c.value[0],
-                        disabled=(st.session_state.defender_criteria != DefenderCriteria.LAPLACE_REASON)
+                        disabled=(project_settings().defender_criteria != DefenderCriteria.LAPLACE_REASON)
                     )
                     b = st.number_input(
                         label="КСС",
                         help="Коэффицент Смены Стратегии для Upper-Confidence-Bound",
                         step=1,
                         value=1000,
-                        disabled=(st.session_state.defender_criteria != DefenderCriteria.LAPLACE_REASON),
+                        disabled=(project_settings().defender_criteria != DefenderCriteria.LAPLACE_REASON),
                         key="form_b"
                     )
                     submit_sim = st.form_submit_button("Запустить", on_click=ready_to_run_sim)
@@ -464,9 +423,9 @@ if st.session_state['intro']:
 
                 Формула:
 
-                $$M = 2^S - 1$$, S - число стратегий 
+                $$C = 2^S - 1$$, $$S$$ - число отдельных мер защиты или атак (техник)
 
-                Для атакующего: $$M_A = 2^{{ {len(attacker_strategies)} }} - 1 = $$ {M_for_attacker}
+                Для атакующего: $$K_A = 2^{{ {len(attacker_strategies)} }} - 1 = $$ {M_for_attacker}
 
                 Для защищающего: $$M_A = 2^{{{len(defender_strategies)}}} - 1 = $$ {M_for_defender}
                 ''')
@@ -480,43 +439,73 @@ if st.session_state['intro']:
             # Разряженная матрица значений
 
             # matrix_defender = sp.sparse.lil_matrix((N, M_for_defender), dtype=np.longlong)
+            #chosen_def_crit = st.session_state.defender_criteria
 
-            if st.session_state["algorithm"] == GameAlgorithm.MonteCarlo:
-                matrix_defender = classic_monte_carlo(M_for_defender, M_for_attacker, N,
-                                                      combination_resolver_mitigations,
-                                                      combination_resolver_attacks)
+            matrix_defender = np.zeros((N, M_for_defender))
+            if "algorithm" in st.session_state and st.session_state["algorithm"] == GameAlgorithm.MonteCarlo:
+                #matrix_defender = np.ndarray((N, M_for_defender), dtype=np.longlong)
+
+                time_taken = time.time()
+
+                progress_text = "Выполняем классический Монте-Карло. Пожалуйста подождите. "
+                progress_bar = st.progress(0.0, text=progress_text)
+
+                # Проводим для каждой стратегии N симуляций
+                for j in range(M_for_defender):
+                    # Комбинация дле текущей стратегии защиты
+                    mitig_comb = combination_resolver_mitigations.unrankVaryingLengthCombination(j)
+
+                    # Проводим N симуляций для текущей стратегии
+                    for n in range(N):
+                        # Случайно выбранная стратегия атаки
+                        i = random.randrange(0, M_for_attacker)
+                        attack_comb = combination_resolver_attacks.unrankVaryingLengthCombination(i)
+
+                        # Проверяем что каждая мера защиты в стратегии защиты защищает от стратегий атаки
+                        # Если хотя бы одна из стратегий защищиает current_val > 0
+                        for m in mitig_comb:
+                            for a in attack_comb:
+                                is_mitigated = sx.does_mitigation_mitigates_technique(
+                                    relations=m_to_t_relation,
+                                    technique_id=a.get("id"),
+                                    mitigation_id=m.get("id"))
+                                if is_mitigated:
+                                    matrix_defender[n, j] += find_price_for_mitigation(m.get("id"))
+                        progress_bar.progress(j / M_for_defender, text=progress_text)
+                        # f"{n} / {simulations_amount} симуляция для $$j = $$ {j}"
+
+                time_taken -= time.time()
+                st.success(f'Метод Монте-Карло занял: {precisedelta(time_taken, minimum_unit="microseconds")}')
+                st.balloons()
+                progress_bar.empty()
             elif st.session_state["algorithm"] == GameAlgorithm.UpperConfidenceBound:
                 matrix_defender = ucb(M_for_defender, M_for_attacker, N,
                                       combination_resolver_mitigations,
                                       combination_resolver_attacks,
                                       st.session_state.b)
-                fig_savage_matrix = plt.figure()
-                plt.imshow(matrix_defender, cmap='winter', interpolation='bilinear')
-                st.pyplot(fig_savage_matrix)
 
             # matrix_defender = matrix_defender.tocsr()
 
-            #st.write("### Диаграмма значений")
-            #col10, col11 = st.columns(2)
+            st.write("### Диаграмма значений")
+            col10, col11 = st.columns(2)
 
-            #with col10:
-            #    """
-            #    На диаграмме представлены значения полученные в процессе симуляций
+            with col10:
+                """
+                На диаграмме представлены значения полученные в процессе симуляций
 
-            #    Важно отметить, так как число потенциальных стратегий слишком большое, в матрице количество строк
-            #    соответсвует количеству симуляций Монте-Карло.
-            #    Так как мы не будем использовать значения не полученные в процессе выполнения Монте-Карло,
-            #    нет смысла подсчитывать значения для этих комбинаций
-            #    """
+                Важно отметить, так как число потенциальных стратегий слишком большое, в матрице количество строк
+                соответсвует количеству симуляций Монте-Карло.
+                Так как мы не будем использовать значения не полученные в процессе выполнения Монте-Карло,
+                нет смысла подсчитывать значения для этих комбинаций
+                """
 
-            #with col11:
-                # matrix_defender_heatmap = px.imshow(matrix_defender)
-                # st.plotly_chart(matrix_defender_heatmap)
-                #fig = plt.figure()
-                #plt.imshow(matrix_defender, cmap='hot', interpolation='bilinear')
-                #st.pyplot(fig)
-                # fig, ax = matspy.spy_to_mpl(matrix_defender)
-                # st.pyplot(fig)
+            with col11:
+                masked_matrix = np.ma.masked_equal(matrix_defender, 0)
+                fig, ax = plt.subplots()
+                cax = ax.imshow(masked_matrix, cmap='hot', interpolation='nearest')
+                fig.colorbar(cax)
+                st.pyplot(fig)
+
             """
             ---
             ### Результаты работы
@@ -524,17 +513,17 @@ if st.session_state['intro']:
 
             j_index = 0
             found_criteria_val = 0
-            if st.session_state.defender_criteria == DefenderCriteria.LAPLACE_REASON:
+            if project_settings().defender_criteria == DefenderCriteria.LAPLACE_REASON:
                 # Найдем сумму для каждого стоблца
-                sum_of_columns = matrix_defender.sum(axis=0)
+                sum_of_columns = matrix_defender.sum(axis=0).flatten()
                 # Маскируем некорректные значения
-                #sum_of_columns = np.ma.masked_equal(sum_of_columns, 0)
+                sum_of_columns = np.ma.masked_equal(sum_of_columns, 0)
                 # Считаем критерий для каждого столбца: по Лапласу это математическое ожидание
                 j_criteria = sum_of_columns * (1 / N)
                 # Поиск критерия для всей матрицы
                 found_criteria_val = np.min(j_criteria)
                 # Индекс стратегии защиты для найденного критерия
-                j_index = np.argmin(sum_of_columns)
+                j_index = np.argmin(j_criteria)
 
                 col1_laplace, col2_laplace = st.columns(2)
                 with col1_laplace:
@@ -556,10 +545,9 @@ if st.session_state['intro']:
                                               xaxis={"title":
                                                          "Итерация Монте-Карло"})
                     st.plotly_chart(fig_laplace)
-                    #elif st.session_state.algorithm == GameAlgorithm.UpperConfidenceBound:
+                    # elif st.session_state.algorithm == GameAlgorithm.UpperConfidenceBound:
 
-
-            elif st.session_state.defender_criteria == DefenderCriteria.WALD_MAXIMIN:
+            elif project_settings().defender_criteria == DefenderCriteria.WALD_MAXIMIN:
                 # Найдем максимумы для каждой стратегии
                 maxes_in_j = matrix_defender.max(axis=0).flatten()
                 # Маскируем некорректные значения
@@ -576,7 +564,7 @@ if st.session_state['intro']:
                     fig_wald.update_traces(connectgaps=True)
                     st.plotly_chart(fig_wald)
 
-            elif st.session_state.defender_criteria == DefenderCriteria.SAVAGE_MINIMAX:
+            elif project_settings().defender_criteria == DefenderCriteria.SAVAGE_MINIMAX:
                 savage_matrix = np.ndarray((N, M_for_defender))
 
                 mins_in_j = matrix_defender.min(axis=0).flatten()
