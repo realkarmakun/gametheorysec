@@ -53,13 +53,13 @@ def show_result(found_crit, crit_index):
                 ''')
 
 
-def get_strategy_for_comb(combination):
+def get_strategy_for_comb(combin):
     strategy_data_display = []
-    for m in comb_for_criteria:
-        name = m.get("name")
+    for mit in combin:
+        name = mit.get("name")
         url = ""
         mitre_id = ''
-        for ref in m.get("external_references"):
+        for ref in mit.get("external_references"):
             if ref.get("source_name") == "mitre-attack":
                 url = ref.get("url")
                 mitre_id = ref.get("external_id")
@@ -68,6 +68,14 @@ def get_strategy_for_comb(combination):
 
     return pd.DataFrame(strategy_data_display, columns=["mitre_id", "name", "url"])
 
+def get_apps_for_comb(combin):
+    result = []
+    for mitig in combin:
+        for def_app in project_settings().defender_apps:
+            if def_app.is_mitigation_present(mitig.get("id")):
+                if def_app not in result:
+                    result.append(def_app)
+    return result
 
 # mean_x_yi - текущее среднее значение для стратегии y_i
 # n_yi  = уже проведенные симуляции
@@ -528,7 +536,7 @@ if st.session_state['intro']:
 
             j_index = 0
             found_criteria_val = 0
-            top_three = None
+            top_three = {}
             if project_settings().defender_criteria == DefenderCriteria.LAPLACE_REASON:
                 # Найдем сумму для каждого стоблца
                 sum_of_columns = matrix_defender.sum(axis=0).flatten()
@@ -541,7 +549,9 @@ if st.session_state['intro']:
                 # Индекс стратегии защиты для найденного критерия
                 j_index = np.argmin(j_criteria)
 
-                top_three = np.argpartition(j_criteria, 3)
+                three_mins = np.argpartition(j_criteria, 3)
+                for top in three_mins:
+                    top_three[top] = j_criteria[top]
 
                 col1_laplace, col2_laplace = st.columns(2)
                 with col1_laplace:
@@ -574,7 +584,9 @@ if st.session_state['intro']:
                 found_criteria_val = np.min(maxes_in_j)
                 j_index = np.argmin(maxes_in_j)
 
-                top_three = np.argpartition(maxes_in_j, 3)
+                three_mins = np.argpartition(maxes_in_j, 3)
+                for top in three_mins:
+                    top_three[top] = maxes_in_j[top]
 
                 col1_wald, col2_wald = st.columns(2)
                 with col1_wald:
@@ -603,7 +615,9 @@ if st.session_state['intro']:
                 found_criteria_val = np.min(maxes_in_j_savage)
                 j_index = np.argmin(maxes_in_j_savage)
 
-                top_three = np.argpartition(maxes_in_j, 3)
+                three_mins = np.argpartition(maxes_in_j_savage, 3)
+                for top in three_mins:
+                    top_three[top] = maxes_in_j_savage[top]
 
                 col1_savage, col2_savage = st.columns(2)
                 with col1_savage:
@@ -611,39 +625,35 @@ if st.session_state['intro']:
 
                 with col2_savage:
                     '#### Матрица рисков'
-                    fig_savage_matrix = plt.figure()
-                    plt.imshow(savage_matrix, cmap='winter', interpolation='bilinear')
-                    st.pyplot(fig_savage_matrix)
+                    fig_sav, ax_sav = plt.subplots()
+                    cax_sav = ax_sav.imshow(savage_matrix, cmap='winter', interpolation='nearest')
+                    fig_sav.colorbar(cax_sav)
+                    st.pyplot(fig_sav)
                     '#### Значения критерия для каждой стратегии защиты'
                     fig_savage = px.line(y=maxes_in_j_savage, x=range(len(maxes_in_j_savage)))
                     fig_savage.update_traces(connectgaps=True)
                     st.plotly_chart(fig_savage)
 
-
             if top_three is not None:
                 "Топ 3 стратегий:"
-                col1_final, col2_final, col3_final = st.columns(3)
-                kth_vals = np.sort(top_three[:3])
-                resulting_strategies = []
-                with col1_final:
-                    f"Топ 1: Для стратегии $$j =$$ {top_three[0]} комбинация:"
-                    comb_for_criteria = combination_resolver_mitigations.unrankVaryingLengthCombination(top_three[0])
-                    strat = get_strategy_for_comb(comb_for_criteria)
-                    st.dataframe(strat)
-                with col2_final:
-                    f"Топ 2: Для стратегии $$j =$$ {top_three[1]} комбинация:"
-                    comb1_for_criteria = combination_resolver_mitigations.unrankVaryingLengthCombination(top_three[1])
-                    strat1 = get_strategy_for_comb(comb1_for_criteria)
-                    st.dataframe(strat1)
-                with col3_final:
-                    f"Топ 3:Для стратегии $$j =$$ {top_three[2]} комбинация:"
-                    comb2_for_criteria = combination_resolver_mitigations.unrankVaryingLengthCombination(top_three[2])
-                    strat2 = get_strategy_for_comb(comb2_for_criteria)
-                    st.dataframe(strat2)
-
-
-
-
+                columns = st.columns(3)
+                #kth_vals = np.sort(top_three[:3])
+                print(top_three)
+                j_s = list(top_three.keys())
+                j_criterias = list(top_three.values())
+                print(j_s)
+                print(j_criterias)
+                counter = 0
+                for col in columns:
+                    col.write(f"Лучшая стратегия топ {counter+1}, j = {j_s[counter]} W ={j_criterias[counter]}")
+                    combination = combination_resolver_mitigations.unrankVaryingLengthCombination(j_s[counter])
+                    strateg = get_strategy_for_comb(combination)
+                    col.dataframe(strateg)
+                    col.write("Приложения соответсвующие стратегии:")
+                    app_list = get_apps_for_comb(combination)
+                    app_list_df = pd.DataFrame([da.as_dict() for da in app_list])
+                    col.dataframe(app_list_df)
+                    counter += 1
             else:
                 comb_for_criteria = combination_resolver_mitigations.unrankVaryingLengthCombination(j_index)
                 f"Для стратегии $$j =$$ {j_index} комбинация:"
